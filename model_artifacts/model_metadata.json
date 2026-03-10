@@ -1,0 +1,107 @@
+{
+  "model_type": "RandomForestRegressor (Tuned)",
+  "best_params": {
+    "n_estimators": 100,
+    "min_samples_split": 5,
+    "min_samples_leaf": 1,
+    "max_features": "log2",
+    "max_depth": 20
+  },
+  "metrics": {
+    "rmse": 49234.02,
+    "mae": 32632.3,
+    "r2": 0.815
+  },
+  "model_comparison": [
+    {
+      "model": "Linear Regression (Baseline)",
+      "test_rmse": 69127.04,
+      "r2": 0.6353
+    },
+    {
+      "model": "Random Forest",
+      "test_rmse": 50459.46,
+      "r2": 0.8057
+    },
+    {
+      "model": "Gradient Boosting",
+      "test_rmse": 48535.77,
+      "r2": 0.8202
+    }
+  ],
+  "feature_importance": [
+    {
+      "feature": "median_income",
+      "importance": 0.297808
+    },
+    {
+      "feature": "ocean_INLAND",
+      "importance": 0.139291
+    },
+    {
+      "feature": "bedrooms_ratio",
+      "importance": 0.103956
+    },
+    {
+      "feature": "population_per_household",
+      "importance": 0.101937
+    },
+    {
+      "feature": "longitude",
+      "importance": 0.076424
+    },
+    {
+      "feature": "latitude",
+      "importance": 0.072417
+    },
+    {
+      "feature": "rooms_per_household",
+      "importance": 0.061644
+    },
+    {
+      "feature": "housing_median_age",
+      "importance": 0.040854
+    },
+    {
+      "feature": "population",
+      "importance": 0.020675
+    },
+    {
+      "feature": "total_rooms",
+      "importance": 0.020134
+    },
+    {
+      "feature": "total_bedrooms",
+      "importance": 0.018175
+    },
+    {
+      "feature": "households",
+      "importance": 0.016922
+    },
+    {
+      "feature": "ocean_<1H OCEAN",
+      "importance": 0.015675
+    },
+    {
+      "feature": "ocean_NEAR OCEAN",
+      "importance": 0.00742
+    },
+    {
+      "feature": "ocean_NEAR BAY",
+      "importance": 0.006421
+    },
+    {
+      "feature": "ocean_ISLAND",
+      "importance": 0.000247
+    }
+  ],
+  "data_stats": {
+    "total_samples": 20640,
+    "training_samples": 16512,
+    "test_samples": 4128,
+    "n_features_input": 12,
+    "n_features_after_encoding": 16,
+    "target_mean": 206855.82,
+    "target_std": 115395.62
+  }
+}
