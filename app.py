@@ -3,8 +3,13 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
-import joblib
-import json
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.impute import SimpleImputer
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
 # ===== การตั้งค่าหน้าเว็บ =====
 # st.set_page_config ต้องเป็น Streamlit command แรกเสมอ
@@ -15,21 +20,91 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ===== โหลดโมเดลและข้อมูล =====
-# ใช้ @st.cache_resource เพื่อโหลดโมเดลครั้งเดียว
-# ไม่โหลดซ้ำทุกครั้งที่ผู้ใช้ interact กับ app
+# ===== Train โมเดลตอนเริ่ม app =====
+# ใช้ @st.cache_resource เพื่อ train ครั้งเดียว ไม่ train ซ้ำทุกครั้งที่ผู้ใช้ interact
+# วิธีนี้ไม่ต้องเก็บไฟล์ .pkl ใน GitHub (ซึ่งมักใหญ่เกิน 25MB)
 @st.cache_resource
-def load_model():
-    """โหลด pipeline และ metadata — ทำครั้งเดียวตอนเริ่ม app"""
-    pipeline = joblib.load("model_artifacts/housing_pipeline.pkl")
-    with open("model_artifacts/model_metadata.json", "r", encoding="utf-8") as f:
-        metadata = json.load(f)
+def train_model():
+    """โหลดข้อมูลและ train pipeline — ทำครั้งเดียวตอนเริ่ม app"""
+
+    url = 'https://raw.githubusercontent.com/ageron/handson-ml2/master/datasets/housing/housing.csv'
+    df = pd.read_csv(url)
+
+    # Feature Engineering (เหมือนกับใน notebook)
+    df['rooms_per_household']     = df['total_rooms'] / df['households']
+    df['bedrooms_ratio']          = df['total_bedrooms'] / df['total_rooms']
+    df['population_per_household'] = df['population'] / df['households']
+
+    numeric_features = [
+        'longitude', 'latitude', 'housing_median_age',
+        'total_rooms', 'total_bedrooms', 'population', 'households',
+        'median_income', 'rooms_per_household', 'bedrooms_ratio', 'population_per_household'
+    ]
+    categorical_features = ['ocean_proximity']
+
+    X = df.drop('median_house_value', axis=1)
+    y = df['median_house_value']
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    # สร้าง Pipeline
+    numeric_transformer = Pipeline([
+        ('imputer', SimpleImputer(strategy='median')),
+        ('scaler', StandardScaler())
+    ])
+    categorical_transformer = Pipeline([
+        ('imputer', SimpleImputer(strategy='most_frequent')),
+        ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+    ])
+    preprocessor = ColumnTransformer([
+        ('num', numeric_transformer, numeric_features),
+        ('cat', categorical_transformer, categorical_features)
+    ])
+    pipeline = Pipeline([
+        ('preprocessor', preprocessor),
+        ('regressor', RandomForestRegressor(
+            n_estimators=100, max_depth=15,
+            min_samples_split=5, random_state=42, n_jobs=-1
+        ))
+    ])
+
+    pipeline.fit(X_train, y_train)
+
+    # คำนวณ metrics
+    y_pred = pipeline.predict(X_test)
+    rmse = float(np.sqrt(mean_squared_error(y_test, y_pred)))
+    mae  = float(mean_absolute_error(y_test, y_pred))
+    r2   = float(r2_score(y_test, y_pred))
+
+    # Feature importance
+    rf = pipeline.named_steps['regressor']
+    ohe_cats = pipeline.named_steps['preprocessor'].transformers_[1][1].named_steps['onehot'].categories_[0]
+    all_feat_names = numeric_features + [f'ocean_{c}' for c in ohe_cats]
+    importance_list = sorted(
+        [{'feature': f, 'importance': float(i)} for f, i in zip(all_feat_names, rf.feature_importances_)],
+        key=lambda x: x['importance'], reverse=True
+    )
+
+    metadata = {
+        'model_type': 'RandomForestRegressor',
+        'metrics': {'rmse': round(rmse, 2), 'mae': round(mae, 2), 'r2': round(r2, 4)},
+        'model_comparison': [
+            {'model': 'Linear Regression (Baseline)', 'test_rmse': 69000, 'r2': 0.638},
+            {'model': 'Random Forest',                'test_rmse': round(rmse, 2), 'r2': round(r2, 4)},
+            {'model': 'Gradient Boosting',            'test_rmse': 58000, 'r2': 0.752},
+        ],
+        'feature_importance': importance_list,
+        'data_stats': {
+            'training_samples': len(X_train),
+            'target_mean': round(float(y.mean()), 2),
+        }
+    }
+
     return pipeline, metadata
 
-with st.spinner("กำลังโหลดโมเดล..."):
-    pipeline, metadata = load_model()
+with st.spinner("⏳ กำลังโหลดและ train โมเดล (ครั้งแรกอาจใช้เวลา 1-2 นาที)..."):
+    pipeline, metadata = train_model()
 
-# ===== Sidebar: ข้อมูลเกี่ยวกับโมเดล =====
+# ===== Sidebar =====
 with st.sidebar:
     st.header("ℹ️ เกี่ยวกับโมเดลนี้")
     st.write(f"**ประเภทโมเดล:** {metadata['model_type']}")
@@ -40,18 +115,16 @@ with st.sidebar:
 
     st.divider()
 
-    # แสดง Feature Importance
-    st.subheader("📊 Feature Importance")
-    importance_data = metadata['feature_importance'][:5]  # top 5
+    st.subheader("📊 Feature Importance (Top 5)")
+    importance_data = metadata['feature_importance'][:5]
     for item in importance_data:
         feat = item['feature'].replace('ocean_', 'ทำเล: ')
-        imp = item['importance']
+        imp  = item['importance']
         st.write(f"**{feat}**")
         st.progress(float(imp) / float(importance_data[0]['importance']))
 
     st.divider()
 
-    # เปรียบเทียบโมเดล
     st.subheader("🏆 เปรียบเทียบโมเดล")
     for m in metadata['model_comparison']:
         st.write(f"**{m['model'].replace(' (Baseline)', '')}**")
@@ -66,7 +139,7 @@ with st.sidebar:
         "กรุณาใช้ประกอบการตัดสินใจเท่านั้น"
     )
 
-# ===== ส่วนหลัก: Header =====
+# ===== Header =====
 st.title("🏠 ระบบประเมินราคาบ้านในแคลิฟอร์เนีย")
 st.markdown("""
 กรอกข้อมูลย่านที่อยู่อาศัยด้านล่าง ระบบจะประเมินราคาบ้านมัธยฐาน
@@ -75,7 +148,7 @@ st.markdown("""
 
 st.divider()
 
-# ===== ส่วนรับ Input =====
+# ===== Input =====
 st.subheader("📋 กรอกข้อมูลย่านที่อยู่อาศัย")
 
 col1, col2 = st.columns(2)
@@ -134,17 +207,14 @@ with col2:
     ocean_proximity = st.selectbox(
         "ความใกล้ชิดกับทะเล",
         options=['<1H OCEAN', 'INLAND', 'NEAR OCEAN', 'NEAR BAY', 'ISLAND'],
-        index=0,
         help="ระยะห่างจากมหาสมุทร"
     )
-
-    # แสดงคำอธิบาย ocean_proximity
     ocean_desc = {
         '<1H OCEAN': '🌊 ห่างจากทะเลน้อยกว่า 1 ชั่วโมง',
-        'INLAND': '🏔️ อยู่ในแผ่นดิน ห่างไกลจากทะเล',
-        'NEAR OCEAN': '🏖️ ใกล้มหาสมุทรแปซิฟิก',
-        'NEAR BAY': '⛵ ใกล้อ่าวซานฟรานซิสโก',
-        'ISLAND': '🏝️ อยู่บนเกาะ'
+        'INLAND':    '🏔️ อยู่ในแผ่นดิน ห่างไกลจากทะเล',
+        'NEAR OCEAN':'🏖️ ใกล้มหาสมุทรแปซิฟิก',
+        'NEAR BAY':  '⛵ ใกล้อ่าวซานฟรานซิสโก',
+        'ISLAND':    '🏝️ อยู่บนเกาะ'
     }
     st.caption(ocean_desc[ocean_proximity])
 
@@ -172,57 +242,48 @@ with btn_col:
         disabled=len(warnings_list) > 0
     )
 
-# ===== แสดงผลการทำนาย =====
+# ===== แสดงผล =====
 if predict_button:
 
-    # คำนวณ derived features (เหมือนกับที่ทำใน notebook)
-    rooms_per_household = total_rooms / households
-    bedrooms_ratio = total_bedrooms / total_rooms
+    rooms_per_household      = total_rooms / households
+    bedrooms_ratio           = total_bedrooms / total_rooms
     population_per_household = population / households
 
-    # สร้าง DataFrame ที่มีชื่อ columns ตรงกับที่ train
     input_data = pd.DataFrame([{
-        'longitude': longitude,
-        'latitude': latitude,
-        'housing_median_age': housing_median_age,
-        'total_rooms': total_rooms,
-        'total_bedrooms': total_bedrooms,
-        'population': population,
-        'households': households,
-        'median_income': median_income,
-        'ocean_proximity': ocean_proximity,
-        'rooms_per_household': rooms_per_household,
-        'bedrooms_ratio': bedrooms_ratio,
+        'longitude':               longitude,
+        'latitude':                latitude,
+        'housing_median_age':      housing_median_age,
+        'total_rooms':             total_rooms,
+        'total_bedrooms':          total_bedrooms,
+        'population':              population,
+        'households':              households,
+        'median_income':           median_income,
+        'ocean_proximity':         ocean_proximity,
+        'rooms_per_household':     rooms_per_household,
+        'bedrooms_ratio':          bedrooms_ratio,
         'population_per_household': population_per_household
     }])
 
-    # ทำนายด้วย pipeline
     with st.spinner("กำลังประเมินราคา..."):
         predicted_price = pipeline.predict(input_data)[0]
-        # clamp ให้อยู่ในช่วงที่สมเหตุสมผล
         predicted_price = max(10000, min(predicted_price, 600000))
 
     st.subheader("📊 ผลการประเมินราคา")
-
-    # แสดงราคาหลัก
     st.success(f"### 💰 ราคาบ้านมัธยฐานที่ประเมินได้\n# ${predicted_price:,.0f}")
 
-    # แสดงช่วงราคา (±1 MAE)
-    mae = metadata['metrics']['mae']
-    low = max(0, predicted_price - mae)
+    mae  = metadata['metrics']['mae']
+    low  = max(0, predicted_price - mae)
     high = predicted_price + mae
 
     col_a, col_b, col_c = st.columns(3)
     col_a.metric("ราคาต่ำสุด (ประมาณ)", f"${low:,.0f}")
-    col_b.metric("ราคาที่ประเมิน", f"${predicted_price:,.0f}")
+    col_b.metric("ราคาที่ประเมิน",       f"${predicted_price:,.0f}")
     col_c.metric("ราคาสูงสุด (ประมาณ)", f"${high:,.0f}")
-
     st.caption(f"ช่วงราคาอ้างอิงจาก MAE ของโมเดล = ±${mae:,.0f}")
 
-    # เปรียบเทียบกับค่าเฉลี่ย dataset
     avg_price = metadata['data_stats']['target_mean']
-    diff = predicted_price - avg_price
-    diff_pct = (diff / avg_price) * 100
+    diff      = predicted_price - avg_price
+    diff_pct  = (diff / avg_price) * 100
 
     st.divider()
     st.write("**📈 เปรียบเทียบกับค่าเฉลี่ยทั้ง Dataset:**")
@@ -231,28 +292,26 @@ if predict_button:
     else:
         st.info(f"ราคาที่ประเมินต่ำกว่าค่าเฉลี่ย **${avg_price:,.0f}** อยู่ **{abs(diff_pct):.1f}%** (${diff:+,.0f})")
 
-    # progress bar แสดงระดับราคา
     st.write("**ระดับราคาเทียบกับราคาสูงสุด ($500,000):**")
     st.progress(
         min(float(predicted_price) / 500000, 1.0),
         text=f"${predicted_price:,.0f} จาก $500,000"
     )
 
-    # สรุปข้อมูลที่กรอก
     with st.expander("📋 ดูข้อมูลที่กรอกและ Derived Features"):
         summary = {
-            "ลองจิจูด": longitude,
-            "ละติจูด": latitude,
-            "อายุบ้านมัธยฐาน (ปี)": housing_median_age,
-            "จำนวนห้องรวม": f"{total_rooms:,}",
-            "จำนวนห้องนอนรวม": f"{total_bedrooms:,}",
-            "จำนวนประชากร": f"{population:,}",
-            "จำนวนครัวเรือน": f"{households:,}",
-            "รายได้มัธยฐาน (หมื่น $)": median_income,
-            "ความใกล้ชิดทะเล": ocean_proximity,
-            "— ห้องต่อครัวเรือน (คำนวณ)": f"{rooms_per_household:.2f}",
-            "— สัดส่วนห้องนอน (คำนวณ)": f"{bedrooms_ratio:.3f}",
-            "— คนต่อครัวเรือน (คำนวณ)": f"{population_per_household:.2f}"
+            "ลองจิจูด":                       longitude,
+            "ละติจูด":                        latitude,
+            "อายุบ้านมัธยฐาน (ปี)":           housing_median_age,
+            "จำนวนห้องรวม":                   f"{total_rooms:,}",
+            "จำนวนห้องนอนรวม":                f"{total_bedrooms:,}",
+            "จำนวนประชากร":                   f"{population:,}",
+            "จำนวนครัวเรือน":                 f"{households:,}",
+            "รายได้มัธยฐาน (หมื่น $)":        median_income,
+            "ความใกล้ชิดทะเล":                ocean_proximity,
+            "— ห้องต่อครัวเรือน (คำนวณ)":    f"{rooms_per_household:.2f}",
+            "— สัดส่วนห้องนอน (คำนวณ)":      f"{bedrooms_ratio:.3f}",
+            "— คนต่อครัวเรือน (คำนวณ)":      f"{population_per_household:.2f}"
         }
         st.dataframe(
             pd.DataFrame.from_dict(summary, orient="index", columns=["ค่า"]),
