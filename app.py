@@ -167,15 +167,23 @@ label, .stNumberInput label, .stSelectbox label {
 }
 
 /* ── Input fields ── */
-.stNumberInput input, .stSelectbox select {
+.stNumberInput input, .stSelectbox select,
+[data-baseweb="input"] input {
     border-radius: 10px !important;
     border-color: #DDD6C8 !important;
     background: #FDFAF6 !important;
+    color: #1A1A2E !important;
+    -webkit-text-fill-color: #1A1A2E !important;
     font-size: 0.95rem !important;
 }
-.stNumberInput input:focus, .stSelectbox select:focus {
+.stNumberInput input:focus {
     border-color: var(--forest) !important;
     box-shadow: 0 0 0 3px rgba(44,74,62,0.1) !important;
+}
+[data-baseweb="base-input"], [data-testid="stNumberInput"] input {
+    background: #FDFAF6 !important;
+    color: #1A1A2E !important;
+    -webkit-text-fill-color: #1A1A2E !important;
 }
 
 /* ── Primary Button ── */
@@ -532,14 +540,26 @@ with right_col:
         'population': 'Population',
         'total_bedrooms': 'Total Bedrooms',
     }
-    for item in top_imp:
-        fname = feat_labels.get(item['feature'], item['feature'].replace('ocean_', 'Ocean: '))
-        pct = item['importance'] / max_imp * 100
+
+    # รวม ocean_* categories ทั้งหมดให้เป็น "Ocean Proximity" ก้อนเดียว
+    merged = {}
+    for item in stats['importance']:
+        fname = item['feature']
+        if fname.startswith('ocean_'):
+            merged['Ocean Proximity'] = merged.get('Ocean Proximity', 0) + item['importance']
+        else:
+            label = feat_labels.get(fname, fname)
+            merged[label] = merged.get(label, 0) + item['importance']
+    merged_sorted = sorted(merged.items(), key=lambda x: x[1], reverse=True)[:7]
+    max_imp = merged_sorted[0][1]
+
+    for fname, imp in merged_sorted:
+        pct = imp / max_imp * 100
         feat_html += f"""
         <div class="feat-row">
             <span class="feat-name">{fname}</span>
             <div class="feat-bar-bg"><div class="feat-bar-fill" style="width:{pct:.0f}%"></div></div>
-            <span class="feat-pct">{item['importance']*100:.1f}%</span>
+            <span class="feat-pct">{imp*100:.1f}%</span>
         </div>"""
     feat_html += '</div>'
     st.markdown(feat_html, unsafe_allow_html=True)
